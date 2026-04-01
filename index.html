@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Interactive CPU Scheduling Simulator — Compare FCFS, SJF, SRTF, Priority, and Round Robin algorithms with Gantt charts, metrics, and insights.">
+  <title>CPU Scheduling Simulator | Interactive Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+</head>
+<body>
+
+  <!-- Mobile Sidebar Toggle -->
+  <button class="mobile-toggle" id="mobileToggle" aria-label="Toggle sidebar">☰</button>
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <div class="app-layout">
+    <!-- ============ SIDEBAR ============ -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <div class="logo">
+          <div class="logo-icon">⚡</div>
+          <div class="logo-text">
+            <h1>CPU Scheduler</h1>
+            <span>Scheduling Simulator</span>
+          </div>
+        </div>
+        <button class="theme-toggle" id="themeToggle" aria-label="Toggle Theme">
+          <span class="icon-light" style="display:none;">☀️</span>
+          <span class="icon-dark">🌙</span>
+        </button>
+      </div>
+
+      <div class="sidebar-content">
+        <!-- Algorithm Selection -->
+        <div class="sidebar-section">
+          <div class="sidebar-section-title">Algorithm</div>
+          <div class="form-group">
+            <label class="form-label" for="algorithmSelect">Scheduling Algorithm</label>
+            <select class="form-select" id="algorithmSelect">
+              <optgroup label="Non-Preemptive">
+                <option value="fcfs">FCFS — First Come First Served</option>
+                <option value="sjf">SJF — Shortest Job First</option>
+                <option value="priority-np">Priority (Non-Preemptive)</option>
+              </optgroup>
+              <optgroup label="Preemptive">
+                <option value="srtf">SRTF — Shortest Remaining Time</option>
+                <option value="priority-p">Priority (Preemptive)</option>
+                <option value="rr">Round Robin</option>
+              </optgroup>
+            </select>
+          </div>
+
+          <!-- Time Quantum (Round Robin) -->
+          <div class="form-group quantum-field" id="quantumField">
+            <label class="form-label" for="quantumInput">Time Quantum</label>
+            <input type="number" class="form-input" id="quantumInput" min="1" value="2" placeholder="e.g. 2">
+          </div>
+        </div>
+
+        <!-- File Upload -->
+        <div class="sidebar-section">
+          <div class="sidebar-section-title">Data Import</div>
+          <div class="file-upload-zone" id="fileUploadZone">
+            <div class="upload-icon">📂</div>
+            <div class="upload-text">Drag & drop or <span>browse</span></div>
+            <div class="upload-hint">CSV or JSON files</div>
+            <input type="file" id="fileInput" accept=".csv,.json">
+          </div>
+          <div class="file-upload-info" id="fileInfo" style="display:none;">
+            <span>📄</span>
+            <span id="fileName"></span>
+            <button class="remove-file" id="removeFile" title="Remove file">✕</button>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="sidebar-section" style="margin-top: auto;">
+          <button class="btn btn-run btn-full" id="runBtn">
+            ▶ Run Simulation
+          </button>
+          <button class="btn btn-secondary btn-full" id="compareBtn" style="margin-top: 8px;">
+            📊 Compare All Algorithms
+          </button>
+          <button class="btn btn-danger btn-full btn-sm" id="clearBtn" style="margin-top: 8px;">
+            🗑 Clear All
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ============ MAIN CONTENT ============ -->
+    <main class="main-content" id="mainContent">
+      <div class="main-header">
+        <h2>CPU Scheduling Simulator</h2>
+        <p>Simulate, visualize, and compare CPU scheduling algorithms interactively.</p>
+      </div>
+
+      <!-- Tab Navigation -->
+      <nav class="tab-nav" id="tabNav">
+        <button class="tab-btn active" data-tab="input">
+          <span class="tab-icon">📝</span> <span>Input</span>
+        </button>
+        <button class="tab-btn" data-tab="results" id="tabResults">
+          <span class="tab-icon">📋</span> <span>Results</span>
+        </button>
+        <button class="tab-btn" data-tab="gantt" id="tabGantt">
+          <span class="tab-icon">📊</span> <span>Gantt Chart</span>
+        </button>
+        <button class="tab-btn" data-tab="comparison" id="tabComparison">
+          <span class="tab-icon">⚖️</span> <span>Comparison</span>
+        </button>
+        <button class="tab-btn" data-tab="insights" id="tabInsights">
+          <span class="tab-icon">💡</span> <span>Insights</span>
+        </button>
+      </nav>
+
+      <!-- ===== TAB: Input ===== -->
+      <div class="tab-panel active" id="panel-input">
+        <div class="glass-card">
+          <div class="card-title">
+            <span class="icon">📝</span> Process Input Table
+            <span class="algo-badge non-preemptive" id="algoBadge">Non-Preemptive</span>
+          </div>
+          <div class="process-table-wrapper">
+            <table class="process-table" id="processTable">
+              <thead>
+                <tr>
+                  <th>Process ID</th>
+                  <th>Arrival Time</th>
+                  <th>Burst Time</th>
+                  <th class="priority-header" id="priorityHeader">Priority</th>
+                  <th style="width:50px"></th>
+                </tr>
+              </thead>
+              <tbody id="processTableBody">
+                <!-- Rows rendered by JS -->
+              </tbody>
+            </table>
+          </div>
+          <button class="add-row-btn" id="addRowBtn">
+            <span>+</span> Add Process
+          </button>
+        </div>
+      </div>
+
+      <!-- ===== TAB: Results ===== -->
+      <div class="tab-panel" id="panel-results">
+        <div id="resultsContent">
+          <div class="empty-state">
+            <div class="empty-icon">📋</div>
+            <h3>No Results Yet</h3>
+            <p>Enter process data and run a simulation to see the results.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== TAB: Gantt Chart ===== -->
+      <div class="tab-panel" id="panel-gantt">
+        <div id="ganttContent">
+          <div class="empty-state">
+            <div class="empty-icon">📊</div>
+            <h3>No Gantt Chart Yet</h3>
+            <p>Run a simulation to visualize the scheduling timeline.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== TAB: Comparison ===== -->
+      <div class="tab-panel" id="panel-comparison">
+        <div id="comparisonContent">
+          <div class="empty-state">
+            <div class="empty-icon">⚖️</div>
+            <h3>No Comparison Data</h3>
+            <p>Click "Compare All Algorithms" to run all six algorithms on the same input data.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== TAB: Insights ===== -->
+      <div class="tab-panel" id="panel-insights">
+        <div id="insightsContent">
+          <div class="empty-state">
+            <div class="empty-icon">💡</div>
+            <h3>No Insights Available</h3>
+            <p>Run a comparison to generate analytical insights and recommendations.</p>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
