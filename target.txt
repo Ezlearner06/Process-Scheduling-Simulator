@@ -1,0 +1,109 @@
+  function renderInsights(allResults) {
+    const container = $('#insightsContent');
+    const algos = Object.keys(allResults);
+    const summaries = {};
+    algos.forEach(a => { summaries[a] = allResults[a].summary; });
+
+    const insights = [];
+
+    // Best overall
+    const scores = {};
+    algos.forEach(a => {
+      let score = 0;
+      score += (1 - normalize(parseFloat(summaries[a].avgWT), algos.map(x => parseFloat(summaries[x].avgWT))));
+      score += (1 - normalize(parseFloat(summaries[a].avgTAT), algos.map(x => parseFloat(summaries[x].avgTAT))));
+      score += (1 - normalize(parseFloat(summaries[a].avgRT), algos.map(x => parseFloat(summaries[x].avgRT))));
+      score += normalize(parseFloat(summaries[a].cpuUtil), algos.map(x => parseFloat(summaries[x].cpuUtil)));
+      score += normalize(parseFloat(summaries[a].throughput), algos.map(x => parseFloat(summaries[x].throughput)));
+      score += (1 - normalize(parseFloat(summaries[a].contextSwitches), algos.map(x => parseFloat(summaries[x].contextSwitches))));
+      scores[a] = score;
+    });
+
+    const ranked = [...algos].sort((a, b) => scores[b] - scores[a]);
+    const bestAlgo = ranked[0];
+    const worstAlgo = ranked[ranked.length - 1];
+
+    // Best performer insight
+    insights.push({
+      type: 'best',
+      icon: '🏆',
+      title: `Best Overall: ${ALGO_NAMES[bestAlgo]}`,
+      text: `${ALGO_NAMES[bestAlgo]} achieved the best overall performance with an average waiting time of ${summaries[bestAlgo].avgWT} units, average turnaround of ${summaries[bestAlgo].avgTAT} units, and ${summaries[bestAlgo].cpuUtil}% CPU utilization. It balances responsiveness with efficiency for this workload.`
+    });
+
+    // Worst performer
+    insights.push({
+      type: 'worst',
+      icon: '⚠️',
+      title: `Least Effective: ${ALGO_NAMES[worstAlgo]}`,
+      text: `${ALGO_NAMES[worstAlgo]} ranked last overall with an average waiting time of ${summaries[worstAlgo].avgWT} units. For this particular workload, it introduces more delay than other approaches.`
+    });
+
+    // Response time champion
+    const rtBest = algos.reduce((a, b) => parseFloat(summaries[a].avgRT) <= parseFloat(summaries[b].avgRT) ? a : b);
+    insights.push({
+      type: 'info',
+      icon: '⚡',
+      title: `Fastest Response: ${ALGO_NAMES[rtBest]}`,
+      text: `${ALGO_NAMES[rtBest]} provides the fastest average response time of ${summaries[rtBest].avgRT} units, meaning processes start executing sooner. This is critical for interactive or time-sensitive systems.`
+    });
+
+    // Context switch analysis
+    const csMax = algos.reduce((a, b) => parseInt(summaries[a].contextSwitches) >= parseInt(summaries[b].contextSwitches) ? a : b);
+    const csMin = algos.reduce((a, b) => parseInt(summaries[a].contextSwitches) <= parseInt(summaries[b].contextSwitches) ? a : b);
+    if (parseInt(summaries[csMax].contextSwitches) !== parseInt(summaries[csMin].contextSwitches)) {
+      insights.push({
+        type: 'warning',
+        icon: '🔀',
+        title: `Context Switch Overhead`,
+        text: `${ALGO_NAMES[csMax]} has the highest context switches (${summaries[csMax].contextSwitches}), which increases overhead. ${ALGO_NAMES[csMin]} has the fewest (${summaries[csMin].contextSwitches}). Excessive preemption can degrade performance in real systems.`
+      });
+    }
+
+    // Starvation warning
+    const hasPriority = ['priority-np', 'priority-p'].some(a => algos.includes(a));
+    if (hasPriority) {
+      const priNP = summaries['priority-np'];
+      const maxWT_pri = Math.max(...allResults['priority-np'].results.map(r => r.waitingTime));
+      if (maxWT_pri > parseFloat(priNP.avgWT) * 2) {
+        insights.push({
+          type: 'warning',
+          icon: '🚨',
+          title: 'Starvation Risk Detected',
+          text: `In Priority scheduling, some processes waited ${maxWT_pri} units — more than 2× the average (${priNP.avgWT}). Lower-priority processes may experience starvation without aging mechanisms.`
+        });
+      }
+    }
+
+    // Fairness analysis
+    const wtStdDevs = {};
+    algos.forEach(a => {
+      const wts = allResults[a].results.map(r => r.waitingTime);
+      const mean = wts.reduce((s, v) => s + v, 0) / wts.length;
+      const variance = wts.reduce((s, v) => s + (v - mean) ** 2, 0) / wts.length;
+      wtStdDevs[a] = Math.sqrt(variance);
+    });
+    const fairestAlgo = algos.reduce((a, b) => wtStdDevs[a] <= wtStdDevs[b] ? a : b);
+    insights.push({
+      type: 'info',
+      icon: '⚖️',
+      title: `Most Fair: ${ALGO_NAMES[fairestAlgo]}`,
+      text: `${ALGO_NAMES[fairestAlgo]} distributes waiting time most evenly across processes (stddev = ${wtStdDevs[fairestAlgo].toFixed(2)}). Fairness matters when all processes should receive equitable CPU access.`
+    });
+
+    // Render
+    container.innerHTML = `
+      <div class="insights-container">
+        ${insights.map(i => `
+          <div class="insight-card ${i.type}">
+            <div class="insight-icon">${i.icon}</div>
+            <div class="insight-content">
+              <h4>${i.title}</h4>
+              <p>${i.text}</p>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+

@@ -1,7 +1,3 @@
-/* ============================================
-   CPU Scheduling Simulator — Application Logic
-   ============================================ */
-
 (() => {
   'use strict';
 
@@ -80,13 +76,13 @@
   function toggleTheme() {
     const currentTheme = document.documentElement.getAttribute('data-theme');
     const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-    
+
     if (newTheme === 'light') {
       document.documentElement.setAttribute('data-theme', 'light');
     } else {
       document.documentElement.removeAttribute('data-theme');
     }
-    
+
     localStorage.setItem('cpu-sim-theme', newTheme);
     updateThemeToggleIcon(newTheme);
   }
@@ -866,7 +862,7 @@
 
     // CSV Export handler
     container.querySelector('#exportCsvBtn').addEventListener('click', () => {
-      const headers = ['PID','Arrival','Burst','Start','Completion','Turnaround','Waiting','Response'];
+      const headers = ['PID', 'Arrival', 'Burst', 'Start', 'Completion', 'Turnaround', 'Waiting', 'Response'];
       const rows = data.results.map(r =>
         [r.pid, r.arrival, r.burst, r.startTime, r.completionTime, r.turnaroundTime, r.waitingTime, r.responseTime].join(',')
       );
@@ -875,7 +871,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `scheduling_results_${ALGO_SHORT[data.algorithm].replace(/\s/g,'_')}.csv`;
+      a.download = `scheduling_results_${ALGO_SHORT[data.algorithm].replace(/\s/g, '_')}.csv`;
       a.click();
       URL.revokeObjectURL(url);
       showToast('CSV downloaded!');
@@ -1319,159 +1315,160 @@
     const algos = ['fcfs', 'sjf', 'priority-np', 'srtf', 'priority-p', 'rr'];
     const summaries = {};
     const fullResults = {};
-    algos.forEach(a => { 
-      summaries[a] = allResults[a].summary; 
+    algos.forEach(a => {
+      summaries[a] = allResults[a].summary;
       fullResults[a] = allResults[a].results;
     });
 
-    const insights = [];
-    const allPrioritiesZero = fullResults['fcfs'].every(r => r.priority === 0);
-    const quantum = parseInt($('#quantumInput').value) || 2;
+    let osInsights = [];
+    let compInsights = [];
 
-    // 1. Convoy Effect Detected (FCFS)
+    const allPrioritiesZero = fullResults['fcfs'].every(r => r.priority === 0);
+    const avgBursts = fullResults['fcfs'].reduce((s, p) => s + p.burst, 0) / fullResults['fcfs'].length;
+
+    // --- OS-Level Insights ---
+
+    // 1. Convoy Effect
     const fcfsRes = fullResults['fcfs'];
     if (fcfsRes.length >= 3) {
-      // Find earlier process with large burst delaying shorter processes
       const firstfew = fcfsRes.slice(0, 2);
       const longProc = firstfew.reduce((max, p) => p.burst > max.burst ? p : max, firstfew[0]);
-      const avgBurst = fcfsRes.reduce((s, p) => s + p.burst, 0) / fcfsRes.length;
-      
-      if (longProc.burst > avgBurst * 1.5) {
-        const delayed = fcfsRes.filter(p => p.arrival > longProc.arrival && p.startTime >= longProc.startTime && p.burst < avgBurst);
+      if (longProc.burst > avgBursts * 1.5) {
+        const delayed = fcfsRes.filter(p => p.arrival > longProc.arrival && p.startTime >= longProc.startTime && p.burst < avgBursts);
         if (delayed.length > 0) {
-          const avgDelayedWT = delayed.reduce((s, p) => s + p.waitingTime, 0) / delayed.length;
-          insights.push({
-            type: 'warning', icon: '🚛', title: 'Convoy Effect Detected — FCFS',
-            text: `FCFS recorded an avg wait of ${summaries['fcfs'].avgWT} units. Process ${longProc.pid} (burst: ${longProc.burst}) blocked shorter jobs behind it, inflating their wait times to roughly ${avgDelayedWT.toFixed(1)} units each. This is the Convoy Effect — a core weakness of non-preemptive scheduling in mixed workloads.`
+          osInsights.push({
+            type: 'warning', icon: '🚛', title: 'Convoy Effect in FCFS',
+            text: `Process ${longProc.pid} (${longProc.burst} burst) dominates the CPU early, causing shorter processes to wait. This inflates FCFS average wait time to ${summaries['fcfs'].avgWT} units.`
           });
         }
       }
     }
 
-    // 2. Starvation Risk (Priority Preemptive)
-    if (!allPrioritiesZero) {
+    // 2. Starvation Risk
+    if (!allPrioritiesZero && osInsights.length < 3) {
       const prioP = fullResults['priority-p'];
-      // Priority is 1 (highest) to N (lowest). Find process with max priority number
       const maxPriVal = Math.max(...prioP.map(p => p.priority));
       const starvedProc = prioP.find(p => p.priority === maxPriVal);
-      const minPriVal = Math.min(...prioP.map(p => p.priority));
-      const fastProc = prioP.find(p => p.priority === minPriVal);
-
-      if (starvedProc && fastProc && starvedProc.waitingTime > fastProc.waitingTime * 3) {
-        const diff = starvedProc.waitingTime - fastProc.waitingTime;
-        insights.push({
-          type: 'worst', icon: '☠️', title: 'Starvation Risk — Priority (Preemptive)',
-          text: `Process ${starvedProc.pid} (priority: ${maxPriVal}, lowest) waited ${starvedProc.waitingTime} units before/during execution — ${diff} units longer than the highest-priority process (${fastProc.pid}). In a busier system, ${starvedProc.pid} would never finish. Aging mechanisms are needed to prevent indefinite starvation.`
+      const fastProc = prioP.reduce((min, p) => p.priority < min.priority ? p : min, prioP[0]);
+      if (starvedProc && fastProc && starvedProc.waitingTime > fastProc.waitingTime * 2) {
+        osInsights.push({
+          type: 'worst', icon: '☠️', title: 'Starvation in Priority (P)',
+          text: `Low priority process ${starvedProc.pid} waits ${starvedProc.waitingTime} units, ${starvedProc.waitingTime - fastProc.waitingTime} units longer than high priority ${fastProc.pid}, requiring aging to avoid starvation.`
         });
       }
-    }
-
-    // 3. Preemption Payoff (SRTF vs SJF)
-    const srtfAvgWT = parseFloat(summaries['srtf'].avgWT);
-    const sjfAvgWT = parseFloat(summaries['sjf'].avgWT);
-    if (srtfAvgWT < sjfAvgWT) {
-      const diff = (sjfAvgWT - srtfAvgWT).toFixed(2);
-      insights.push({
-        type: 'best', icon: '🚀', title: 'Preemption Payoff — SRTF vs SJF',
-        text: `SRTF's avg wait was ${srtfAvgWT} units vs SJF's ${sjfAvgWT} units — a ${diff} unit improvement. This gain came from preempting longer running jobs when a new process arrived with a shorter remaining burst. Preemption directly rescued response time for late-arriving short processes.`
-      });
-    }
-
-    // 4. Fairness vs Efficiency Tradeoff (Round Robin)
-    const wtStdDevs = {};
-    algos.forEach(a => {
-      const wts = fullResults[a].map(r => r.waitingTime);
-      const mean = wts.reduce((s, v) => s + v, 0) / wts.length;
-      const variance = wts.reduce((s, v) => s + (v - mean) ** 2, 0) / wts.length;
-      wtStdDevs[a] = Math.sqrt(variance);
-    });
-    
-    // Check if RR is among the fairest
-    const fairestAlgo = algos.reduce((a, b) => wtStdDevs[a] < wtStdDevs[b] ? a : b);
-    if (fairestAlgo === 'rr' && parseInt(summaries['rr'].contextSwitches) > parseInt(summaries['sjf'].contextSwitches)) {
-      const extraSwitches = parseInt(summaries['rr'].contextSwitches) - parseInt(summaries['sjf'].contextSwitches);
-      insights.push({
-        type: 'info', icon: '⚖️', title: 'Fairness vs Efficiency Tradeoff — Round Robin',
-        text: `RR achieved the lowest wait-time standard deviation (σ = ${wtStdDevs['rr'].toFixed(2)}) — meaning no process was disproportionately delayed. But this fairness cost ${extraSwitches} extra context switches over SJF, adding scheduling overhead. Ideal for time-sharing systems, poor for CPU-bound batch workloads.`
-      });
-    }
-
-    // 5. Priority Inversion Zone (Priority NP vs Priority P)
-    if (!allPrioritiesZero) {
-      const prioNP = fullResults['priority-np'];
-      const prioP = fullResults['priority-p'];
-      
-      // Look for a high priority process (low num) that waited significantly longer in NP than P
-      for (let i = 0; i < prioNP.length; i++) {
-        let pNP = prioNP[i];
-        let pP = prioP.find(p => p.pid === pNP.pid);
-        // If it's a high priority process and it waited at least 2 units longer in NP
-        if (pNP.priority < 3 && (pNP.waitingTime - pP.waitingTime > 2) && pNP.arrival > 0) {
-          insights.push({
-            type: 'warning', icon: '⏳', title: 'Priority Inversion Zone — Priority NP vs Priority P',
-            text: `Priority NP forced ${pNP.pid} (high priority, late arrival) to wait behind a lower-priority running process for ${pNP.waitingTime} units — a classic priority inversion. Priority P eliminated this by preempting at arrival, reducing ${pNP.pid}'s wait to ${pP.waitingTime} units. This is exactly the problem NASA's Mars Pathfinder faced in 1997.`
-          });
-          break; // Show only once
+    } else if (osInsights.length < 3) {
+        const sjfRes = fullResults['sjf'];
+        const maxBurst = Math.max(...sjfRes.map(p => p.burst));
+        const starvedSjf = sjfRes.find(p => p.burst === maxBurst);
+        const fastSjf = sjfRes.reduce((min, p) => p.burst < min.burst ? p : min, sjfRes[0]);
+        if(starvedSjf && fastSjf && starvedSjf.waitingTime > fastSjf.waitingTime * 2) {
+           osInsights.push({
+              type: 'worst', icon: '☠️', title: 'Starvation in SJF',
+              text: `Long process ${starvedSjf.pid} (${starvedSjf.burst} burst) waits ${starvedSjf.waitingTime} units as shorter jobs keep bypassing it, exposing SJF's starvation risk.`
+           });
         }
-      }
     }
 
-    // 6. Best Fit Verdict — Algorithm Recommendation Engine
-    // Determine workload characteristics
-    const bursts = fullResults['fcfs'].map(p => p.burst);
-    const avgBurst = bursts.reduce((a, b) => a + b, 0) / bursts.length;
-    const burstVariance = bursts.reduce((s, v) => s + (v - avgBurst) ** 2, 0) / bursts.length;
-    const isMixedWorkload = burstVariance > avgBurst * 0.5; // High variance in bursts
-    
-    let winnerWait = algos.reduce((a, b) => parseFloat(summaries[a].avgWT) <= parseFloat(summaries[b].avgWT) ? a : b);
-    let recommendation = '';
-    
-    if (isMixedWorkload && !allPrioritiesZero) {
-        recommendation = `For this complex workload profile (mixed burst lengths, staggered arrivals, distinct priorities): **${ALGO_NAMES[winnerWait]}** minimizes avg wait, **Round Robin** maximizes fairness across distinct jobs, and **Priority P** strict-enforces rules. If this were a web server handling user requests → Round Robin. If this were a batch processing system → ${ALGO_NAMES[winnerWait]}.`;
-    } else if (isMixedWorkload) {
-        recommendation = `For this workload profile (mixed burst lengths, staggered arrivals): **${ALGO_NAMES[winnerWait]}** minimizes avg wait dramatically, **Round Robin** maximizes fairness, **FCFS** is simplest but suffers from convoys. If this were a web server → Round Robin. If this were a batch processing system → ${ALGO_NAMES[winnerWait]}.`;
-    } else {
-        recommendation = `For this uniform workload profile (similar burst lengths): the differences between algorithms diminish. **${ALGO_NAMES[winnerWait]}** mathematically wins, but FCFS is highly efficient due to low overhead (only ${summaries['fcfs'].contextSwitches} switches). Choose based on system constraints rather than theoretical wait times.`;
-    }
-
-    insights.push({
-      type: 'best', icon: '🧠', title: 'Best Fit Verdict — Algorithm Recommendation Engine',
-      text: recommendation
-    });
-
-    // Fallback if no specific anomalies were detected to ensure there's always UI
-    if (insights.length < 3) {
-      if (allPrioritiesZero) {
-        insights.unshift({
-          type: 'notice', icon: 'ℹ️', title: 'Input Defaults Applied',
-          text: `Your input has no explicit priorities — all default to 0, making Priority algorithms identical to FCFS. Try adding distinct priorities to trigger deeper Priority-based diagnostics.`
+    // 3. Context Switching Overhead
+    if (osInsights.length < 3) {
+      const rrCS = parseInt(summaries['rr'].contextSwitches);
+      const sjfCS = parseInt(summaries['sjf'].contextSwitches);
+      if (rrCS > sjfCS * 1.5) {
+        osInsights.push({
+          type: 'info', icon: '🔄', title: 'High Context Switching in RR',
+          text: `Round Robin executed ${rrCS} context switches (vs SJF's ${sjfCS}). The short quantum forces frequent preemption, severely adding to CPU overhead.`
+        });
+      } else {
+        osInsights.push({
+          type: 'info', icon: '📉', title: 'Low Context Switch Overhead',
+          text: `With only ${summaries['fcfs'].contextSwitches} context switches, FCFS minimizes CPU scheduling overhead, keeping throughput high at ${summaries['fcfs'].throughput} proc/unit.`
         });
       }
-      const genericBest = algos.reduce((a, b) => parseFloat(summaries[a].avgWT) <= parseFloat(summaries[b].avgWT) ? a : b);
-      const genericWorst = algos.reduce((a, b) => parseFloat(summaries[a].avgWT) >= parseFloat(summaries[b].avgWT) ? a : b);
-      if (!insights.some(i => i.title.includes('Best Fit Verdict'))) {
-         insights.push({
-            type: 'best', icon: '🏆', title: `Efficiency Leader: ${ALGO_NAMES[genericBest]}`,
-            text: `${ALGO_NAMES[genericBest]} achieved the lowest avg wait of ${summaries[genericBest].avgWT} units mathematically.`
-         });
-      }
-      insights.push({
-        type: 'worst', icon: '⚠️', title: `Maximum Delay: ${ALGO_NAMES[genericWorst]}`,
-        text: `${ALGO_NAMES[genericWorst]} struggled most with this specific sequence, yielding a wait time of ${summaries[genericWorst].avgWT} units.`
-      });
     }
+
+    // Backup OS insights if we still don't have 3
+    if (osInsights.length < 3) {
+        const idleTime = parseInt(summaries['fcfs'].idleTime);
+        if (idleTime > 0) {
+            osInsights.push({
+                type: 'info', icon: '💤', title: 'CPU Idle Bottleneck',
+                text: `The CPU remains idle for ${idleTime} units across algorithms because processes arrive late, reducing overall utilization to maximum ${Math.max(...algos.map(a => parseFloat(summaries[a].cpuUtil)))}%.`
+            });
+        }
+    }
+    
+    // Fallback if still < 3
+    if (osInsights.length < 3) {
+        osInsights.push({
+             type: 'info', icon: '📊', title: 'Resource Utilization',
+             text: `Highest CPU utilization achieved is ${Math.max(...algos.map(a => parseFloat(summaries[a].cpuUtil)))}%. The system effectively processes ${fullResults['fcfs'].length} tasks in ${allResults['fcfs'].totalTime} units.`
+        });
+    }
+
+    // Slice to exactly 3
+    osInsights = osInsights.slice(0, 3);
+
+    // --- Comparison Insights ---
+
+    // 1. Waiting time difference
+    let bestAlgoWT = algos.reduce((a, b) => parseFloat(summaries[a].avgWT) <= parseFloat(summaries[b].avgWT) ? a : b);
+    let worstAlgoWT = algos.reduce((a, b) => parseFloat(summaries[a].avgWT) >= parseFloat(summaries[b].avgWT) ? a : b);
+    
+    if (bestAlgoWT !== worstAlgoWT) {
+        compInsights.push({
+            type: 'best', icon: '⏱️', title: `Efficiency: ${ALGO_NAMES[bestAlgoWT]} over ${ALGO_NAMES[worstAlgoWT]}`,
+            text: `${ALGO_NAMES[bestAlgoWT]} reduces average waiting time to ${summaries[bestAlgoWT].avgWT} units compared to ${summaries[worstAlgoWT].avgWT} units in ${ALGO_NAMES[worstAlgoWT]}, driven by better sequencing.`
+        });
+    }
+
+    // 2. Response Time / Preemption payoff
+    if (compInsights.length < 2) {
+        let bestAlgoRT = algos.reduce((a, b) => parseFloat(summaries[a].avgRT) <= parseFloat(summaries[b].avgRT) ? a : b);
+        let worstAlgoRT = algos.reduce((a, b) => parseFloat(summaries[a].avgRT) >= parseFloat(summaries[b].avgRT) ? a : b);
+        if (bestAlgoRT !== worstAlgoRT) {
+            compInsights.push({
+                type: 'best', icon: '🚀', title: `Responsiveness: ${ALGO_NAMES[bestAlgoRT]} vs ${ALGO_NAMES[worstAlgoRT]}`,
+                text: `${ALGO_NAMES[bestAlgoRT]} guarantees an average initial response in ${summaries[bestAlgoRT].avgRT} units, vastly outperforming ${ALGO_NAMES[worstAlgoRT]}'s ${summaries[worstAlgoRT].avgRT} units due to effective preemption.`
+            });
+        }
+    }
+    
+    // Backup comparison if still < 2
+    if (compInsights.length < 2) {
+       let bestTP = algos.reduce((a, b) => parseFloat(summaries[a].throughput) >= parseFloat(summaries[b].throughput) ? a : b);
+       let worstTP = algos.reduce((a, b) => parseFloat(summaries[a].throughput) <= parseFloat(summaries[b].throughput) ? a : b);
+       compInsights.push({
+           type: 'best', icon: '📈', title: `Throughput Dynamics`,
+           text: `${ALGO_NAMES[bestTP]} finished all jobs faster processing ${summaries[bestTP].throughput} proc/unit vs ${summaries[worstTP].throughput} in ${ALGO_NAMES[worstTP]}.`
+       });
+    }
+
+    // Fallback if STILL < 2 (only happens if all are completely identical)
+    if (compInsights.length < 2) {
+       compInsights.push({
+           type: 'info', icon: '⚖️', title: `Algorithm Equivalency`,
+           text: `Wait times across all algorithms are essentially identical (approx ${summaries['fcfs'].avgWT} units) due to the uniform burst and arrival pattern.`
+       });
+    }
+    
+    compInsights = compInsights.slice(0, 2);
+
+    const finalInsights = [...osInsights, ...compInsights];
 
     // Render Insights Array to DOM
     container.innerHTML = `
       <div class="insights-container">
-        ${insights.map(i => `
-          <div class="insight-card ${i.type}">
-            <div class="insight-icon">${i.icon}</div>
+        ${finalInsights.map(i => `
+          <details class="insight-card ${i.type}">
+            <summary class="insight-summary">
+                <div class="insight-icon">${i.icon}</div>
+                <h4>${i.title}</h4>
+                <div class="dropdown-arrow">▼</div>
+            </summary>
             <div class="insight-content">
-              <h4>${i.title}</h4>
               <p>${i.text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p>
             </div>
-          </div>
+          </details>
         `).join('')}
       </div>
     `;
