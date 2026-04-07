@@ -147,6 +147,13 @@
       sidebar.classList.remove('open');
       sidebarOverlay.classList.remove('active');
     });
+
+    // Event delegation for "Compare All" button inside empty state
+    $('#comparisonContent').addEventListener('click', (e) => {
+      if (e.target.classList.contains('btn-compare-empty')) {
+        runComparison();
+      }
+    });
   }
 
   // ========== UI Helpers ==========
@@ -356,15 +363,21 @@
   }
 
   // ========== Scheduling Algorithms ==========
+  // Each algorithm takes an array of process objects {pid, arrival, burst, priority}
+  // and returns {gantt[], results[], totalTime} for visualization.
 
-  // --- FCFS ---
+  // --- FCFS (First Come First Served) ---
+  // Simplest algorithm: processes execute in order of arrival time.
+  // Non-preemptive — once a process starts, it runs to completion.
   function scheduleFCFS(procs) {
+    // Sort by arrival time; tie-break by PID alphabetically
     const sorted = [...procs].sort((a, b) => a.arrival - b.arrival || a.pid.localeCompare(b.pid));
     const gantt = [];
     let time = 0;
     const results = [];
 
     sorted.forEach(p => {
+      // If CPU is idle before next process arrives, insert idle block
       if (time < p.arrival) {
         gantt.push({ pid: 'idle', start: time, end: p.arrival });
         time = p.arrival;
@@ -387,7 +400,9 @@
     return { gantt, results: computeMetrics(results), totalTime: time };
   }
 
-  // --- SJF (Non-Preemptive) ---
+  // --- SJF (Shortest Job First — Non-Preemptive) ---
+  // Picks the process with the shortest burst time from the ready queue.
+  // Non-preemptive: once selected, runs to completion before picking next.
   function scheduleSJF(procs) {
     const remaining = procs.map(p => ({ ...p }));
     const gantt = [];
@@ -396,15 +411,18 @@
     let time = 0;
 
     while (done.size < procs.length) {
+      // Get all processes that have arrived and are not yet completed
       const ready = remaining.filter(p => !done.has(p.pid) && p.arrival <= time);
 
       if (ready.length === 0) {
+        // CPU idle — jump to next arrival
         const nextArrival = Math.min(...remaining.filter(p => !done.has(p.pid)).map(p => p.arrival));
         gantt.push({ pid: 'idle', start: time, end: nextArrival });
         time = nextArrival;
         continue;
       }
 
+      // Sort by burst (shortest first), then arrival, then PID for tie-breaking
       ready.sort((a, b) => a.burst - b.burst || a.arrival - b.arrival || a.pid.localeCompare(b.pid));
       const p = ready[0];
       const start = time;
@@ -422,6 +440,8 @@
   }
 
   // --- Priority (Non-Preemptive) ---
+  // Picks the process with the lowest priority number (highest priority).
+  // If no priority is assigned, defaults to 0 — all processes are treated equally.
   function schedulePriorityNP(procs) {
     const remaining = procs.map(p => ({ ...p }));
     const gantt = [];
@@ -455,8 +475,11 @@
     return { gantt, results: computeMetrics(results), totalTime: time };
   }
 
-  // --- SRTF (Preemptive SJF) ---
+  // --- SRTF (Shortest Remaining Time First — Preemptive SJF) ---
+  // At every time unit, checks if a newly arrived process has shorter
+  // remaining burst than the current one. If so, preempts (switches).
   function scheduleSRTF(procs) {
+    // Track remaining burst, first start time, and completion for each process
     const pMap = {};
     procs.forEach(p => {
       pMap[p.pid] = { ...p, remaining: p.burst, firstStart: -1, completionTime: 0 };
@@ -510,6 +533,8 @@
   }
 
   // --- Priority (Preemptive) ---
+  // Like Priority NP, but checks at every time unit — if a higher-priority
+  // process arrives, the current process is preempted immediately.
   function schedulePriorityP(procs) {
     const pMap = {};
     procs.forEach(p => {
@@ -562,6 +587,9 @@
   }
 
   // --- Round Robin ---
+  // Each process gets a fixed time slice (quantum, default 2ms).
+  // After its slice, the process goes to the back of the FIFO queue.
+  // Ensures fairness — every process gets equal CPU time in rotation.
   function scheduleRR(procs, quantum) {
     const pMap = {};
     procs.forEach(p => {
@@ -569,7 +597,7 @@
     });
 
     const gantt = [];
-    const queue = [];
+    const queue = [];  // FIFO ready queue
     let time = 0;
     const maxTime = Math.max(...procs.map(p => p.arrival)) + procs.reduce((s, p) => s + p.burst, 0) + 10;
     let completed = 0;
@@ -646,6 +674,9 @@
   }
 
   // ========== Metrics Computation ==========
+  // TAT = Completion Time - Arrival Time (total time in system)
+  // WT  = TAT - Burst Time (time spent waiting in ready queue)
+  // RT  = First Start - Arrival Time (time before first CPU access)
   function computeMetrics(results) {
     return results.map(r => {
       const tat = r.completionTime - r.arrival;
@@ -794,6 +825,10 @@
         </div>
       </div>
 
+      <div class="export-bar">
+        <button class="btn-export" id="exportCsvBtn">📥 Download CSV</button>
+      </div>
+
       <div class="glass-card">
         <div class="card-title"><span class="icon">📋</span> Process Results — ${ALGO_NAMES[data.algorithm]}</div>
         <div class="process-table-wrapper">
@@ -828,28 +863,65 @@
         </div>
       </div>
     `;
+
+    // CSV Export handler
+    container.querySelector('#exportCsvBtn').addEventListener('click', () => {
+      const headers = ['PID','Arrival','Burst','Start','Completion','Turnaround','Waiting','Response'];
+      const rows = data.results.map(r =>
+        [r.pid, r.arrival, r.burst, r.startTime, r.completionTime, r.turnaroundTime, r.waitingTime, r.responseTime].join(',')
+      );
+      const csv = [headers.join(','), ...rows].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `scheduling_results_${ALGO_SHORT[data.algorithm].replace(/\s/g,'_')}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('CSV downloaded!');
+    });
   }
 
-  // ========== Render Gantt Chart ==========
+  // ========== Render Gantt Chart with Playback ==========
+  let ganttPlaybackTimer = null; // Track active playback interval
+
   function renderGantt(data) {
     const container = $('#ganttContent');
     const gantt = data.gantt;
     const totalTime = data.totalTime;
+
+    // Clean up any previous playback
+    if (ganttPlaybackTimer) { clearInterval(ganttPlaybackTimer); ganttPlaybackTimer = null; }
 
     if (totalTime === 0) {
       container.innerHTML = '<div class="empty-state"><div class="empty-icon">📊</div><h3>No data</h3></div>';
       return;
     }
 
-    // Build PID color map
     const pidSet = [...new Set(data.results.map(r => r.pid))];
     const colorMap = {};
     pidSet.forEach((pid, i) => { colorMap[pid] = i % PROCESS_COLORS.length; });
-
     const pixelsPerUnit = Math.max(30, Math.min(80, 800 / totalTime));
 
-    // Build timeline Gantt (single-row like traditional)
+    // Build player controls + chart HTML
     let ganttHTML = `
+      <div class="gantt-player-controls">
+        <button class="gantt-player-btn" id="ganttPlayBtn" title="Play">▶</button>
+        <button class="gantt-player-btn" id="ganttPauseBtn" title="Pause">❚❚</button>
+        <button class="gantt-player-btn" id="ganttResetBtn" title="Reset">↺</button>
+        <span class="gantt-time-display" id="ganttTimeDisplay">t = 0</span>
+        <div class="gantt-progress-bar"><div class="gantt-progress-fill" id="ganttProgressFill"></div></div>
+        <span class="gantt-status" id="ganttStatus">Ready</span>
+        <div class="gantt-speed-control">
+          <label>Speed:</label>
+          <select id="ganttSpeedSelect">
+            <option value="800">0.5x</option>
+            <option value="400" selected>1x</option>
+            <option value="200">2x</option>
+            <option value="100">4x</option>
+          </select>
+        </div>
+      </div>
       <div class="glass-card">
         <div class="card-title"><span class="icon">📊</span> Gantt Chart — ${ALGO_NAMES[data.algorithm]}</div>
         <div class="gantt-container">
@@ -859,61 +931,138 @@
               <div class="gantt-bars" style="height: 48px; min-width: ${totalTime * pixelsPerUnit}px;">
     `;
 
-    gantt.forEach(block => {
+    gantt.forEach((block, idx) => {
       const left = block.start * pixelsPerUnit;
       const width = (block.end - block.start) * pixelsPerUnit;
       if (block.pid === 'idle') {
-        ganttHTML += `<div class="gantt-block idle" style="left:${left}px;width:${width}px;" title="Idle: ${block.start} units – ${block.end} units">idle</div>`;
+        ganttHTML += `<div class="gantt-block idle hidden" data-block-idx="${idx}" style="left:${left}px;width:${width}px;" title="Idle: ${block.start}–${block.end}">idle</div>`;
       } else {
         const ci = colorMap[block.pid];
-        ganttHTML += `<div class="gantt-block gantt-color-${ci}" style="left:${left}px;width:${width}px;" title="${block.pid}: ${block.start} units – ${block.end} units">${block.pid}</div>`;
+        ganttHTML += `<div class="gantt-block gantt-color-${ci} hidden" data-block-idx="${idx}" style="left:${left}px;width:${width}px;" title="${block.pid}: ${block.start}–${block.end}">${block.pid}</div>`;
       }
     });
 
-    ganttHTML += `
-              </div>
-            </div>
+    ganttHTML += `</div></div>
             <div class="gantt-timeline-line" style="min-width: ${totalTime * pixelsPerUnit + 60}px;"></div>
-            <div class="gantt-timeline" style="min-width: ${totalTime * pixelsPerUnit}px; height: 20px; position: relative;">
-    `;
+            <div class="gantt-timeline" style="min-width: ${totalTime * pixelsPerUnit}px; height: 20px; position: relative;">`;
 
-    // Timeline ticks
     const tickInterval = totalTime <= 20 ? 1 : totalTime <= 50 ? 2 : 5;
     for (let t = 0; t <= totalTime; t += tickInterval) {
       ganttHTML += `<div class="tick" style="left:${t * pixelsPerUnit}px;">${t}</div>`;
     }
-    // Always show last tick
     if (totalTime % tickInterval !== 0) {
       ganttHTML += `<div class="tick" style="left:${totalTime * pixelsPerUnit}px;">${totalTime}</div>`;
     }
 
-    ganttHTML += `
-            </div>
-          </div>
-          <div class="gantt-legend">
-    `;
+    ganttHTML += `</div></div>
+          <div class="gantt-legend">`;
 
     pidSet.forEach((pid, i) => {
       const ci = i % PROCESS_COLORS.length;
-      ganttHTML += `
-        <div class="gantt-legend-item">
-          <div class="gantt-legend-color gantt-color-${ci}" style="background: ${PROCESS_COLORS[ci]};"></div>
-          <span>${pid}</span>
-        </div>
-      `;
+      ganttHTML += `<div class="gantt-legend-item"><div class="gantt-legend-color gantt-color-${ci}" style="background: ${PROCESS_COLORS[ci]};"></div><span>${pid}</span></div>`;
     });
 
-    ganttHTML += `
-            <div class="gantt-legend-item">
-              <div class="gantt-legend-color" style="background: repeating-linear-gradient(45deg, rgba(100,116,139,0.4), rgba(100,116,139,0.4) 3px, transparent 3px, transparent 6px); border: 1px dashed var(--text-muted);"></div>
-              <span>Idle</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
+    ganttHTML += `<div class="gantt-legend-item"><div class="gantt-legend-color" style="background: repeating-linear-gradient(45deg, rgba(100,116,139,0.4), rgba(100,116,139,0.4) 3px, transparent 3px, transparent 6px); border: 1px dashed var(--text-muted);"></div><span>Idle</span></div>
+          </div></div></div>`;
 
     container.innerHTML = ganttHTML;
+
+    // Playback logic
+    let currentBlockIdx = 0;
+    let currentTime = 0;
+    let isPlaying = false;
+    const blocks = container.querySelectorAll('.gantt-block');
+    const timeDisplay = container.querySelector('#ganttTimeDisplay');
+    const progressFill = container.querySelector('#ganttProgressFill');
+    const statusEl = container.querySelector('#ganttStatus');
+    const speedSelect = container.querySelector('#ganttSpeedSelect');
+
+    function revealBlock(idx) {
+      if (idx < blocks.length) {
+        blocks[idx].classList.remove('hidden');
+        blocks[idx].classList.add('revealing');
+      }
+    }
+
+    function updateStatus(time) {
+      const activeBlock = gantt.find(b => b.start <= time && b.end > time);
+      if (activeBlock) {
+        if (activeBlock.pid === 'idle') {
+          statusEl.textContent = '💤 CPU Idle';
+          statusEl.className = 'gantt-status idle';
+        } else {
+          statusEl.textContent = `▶ Executing ${activeBlock.pid}`;
+          statusEl.className = 'gantt-status running';
+        }
+      }
+    }
+
+    function playStep() {
+      if (currentBlockIdx < gantt.length) {
+        const block = gantt[currentBlockIdx];
+        if (currentTime >= block.start) {
+          revealBlock(currentBlockIdx);
+          currentTime = block.end;
+          currentBlockIdx++;
+        } else {
+          currentTime++;
+        }
+        timeDisplay.textContent = `t = ${currentTime}`;
+        progressFill.style.width = `${(currentTime / totalTime) * 100}%`;
+        updateStatus(currentTime - 1);
+      }
+      if (currentBlockIdx >= gantt.length) {
+        clearInterval(ganttPlaybackTimer);
+        ganttPlaybackTimer = null;
+        isPlaying = false;
+        statusEl.textContent = '✅ Complete';
+        statusEl.className = 'gantt-status finished';
+        timeDisplay.textContent = `t = ${totalTime}`;
+        progressFill.style.width = '100%';
+      }
+    }
+
+    container.querySelector('#ganttPlayBtn').addEventListener('click', () => {
+      if (isPlaying) return;
+      if (currentBlockIdx >= gantt.length) { /* already done, reset first */ return; }
+      isPlaying = true;
+      const speed = parseInt(speedSelect.value);
+      ganttPlaybackTimer = setInterval(playStep, speed);
+    });
+
+    container.querySelector('#ganttPauseBtn').addEventListener('click', () => {
+      if (ganttPlaybackTimer) { clearInterval(ganttPlaybackTimer); ganttPlaybackTimer = null; }
+      isPlaying = false;
+      statusEl.textContent = '⏸ Paused';
+      statusEl.className = 'gantt-status';
+    });
+
+    container.querySelector('#ganttResetBtn').addEventListener('click', () => {
+      if (ganttPlaybackTimer) { clearInterval(ganttPlaybackTimer); ganttPlaybackTimer = null; }
+      isPlaying = false;
+      currentBlockIdx = 0;
+      currentTime = 0;
+      blocks.forEach(b => { b.classList.add('hidden'); b.classList.remove('revealing'); });
+      timeDisplay.textContent = 't = 0';
+      progressFill.style.width = '0%';
+      statusEl.textContent = 'Ready';
+      statusEl.className = 'gantt-status';
+    });
+
+    speedSelect.addEventListener('change', () => {
+      if (isPlaying) {
+        clearInterval(ganttPlaybackTimer);
+        const speed = parseInt(speedSelect.value);
+        ganttPlaybackTimer = setInterval(playStep, speed);
+      }
+    });
+
+    // Auto-reveal all blocks immediately for viewing (user can reset + play)
+    blocks.forEach(b => { b.classList.remove('hidden'); });
+    timeDisplay.textContent = `t = ${totalTime}`;
+    progressFill.style.width = '100%';
+    statusEl.textContent = '✅ Complete — press ↺ then ▶ to simulate';
+    statusEl.className = 'gantt-status finished';
   }
 
   // ========== Render Comparison ==========
@@ -1164,101 +1313,155 @@
     });
   }
 
-  // ========== Render Insights ==========
+  // ========== Render Insights (Diagnostic Engine) ==========
   function renderInsights(allResults) {
     const container = $('#insightsContent');
-    const algos = Object.keys(allResults);
+    const algos = ['fcfs', 'sjf', 'priority-np', 'srtf', 'priority-p', 'rr'];
     const summaries = {};
-    algos.forEach(a => { summaries[a] = allResults[a].summary; });
+    const fullResults = {};
+    algos.forEach(a => { 
+      summaries[a] = allResults[a].summary; 
+      fullResults[a] = allResults[a].results;
+    });
 
     const insights = [];
+    const allPrioritiesZero = fullResults['fcfs'].every(r => r.priority === 0);
+    const quantum = parseInt($('#quantumInput').value) || 2;
 
-    // Best overall
-    const scores = {};
-    algos.forEach(a => {
-      let score = 0;
-      score += (1 - normalize(parseFloat(summaries[a].avgWT), algos.map(x => parseFloat(summaries[x].avgWT))));
-      score += (1 - normalize(parseFloat(summaries[a].avgTAT), algos.map(x => parseFloat(summaries[x].avgTAT))));
-      score += (1 - normalize(parseFloat(summaries[a].avgRT), algos.map(x => parseFloat(summaries[x].avgRT))));
-      score += normalize(parseFloat(summaries[a].cpuUtil), algos.map(x => parseFloat(summaries[x].cpuUtil)));
-      score += normalize(parseFloat(summaries[a].throughput), algos.map(x => parseFloat(summaries[x].throughput)));
-      score += (1 - normalize(parseFloat(summaries[a].contextSwitches), algos.map(x => parseFloat(summaries[x].contextSwitches))));
-      scores[a] = score;
-    });
-
-    const ranked = [...algos].sort((a, b) => scores[b] - scores[a]);
-    const bestAlgo = ranked[0];
-    const worstAlgo = ranked[ranked.length - 1];
-
-    // Best performer insight
-    insights.push({
-      type: 'best',
-      icon: '🏆',
-      title: `Best Overall: ${ALGO_NAMES[bestAlgo]}`,
-      text: `${ALGO_NAMES[bestAlgo]} achieved the best overall performance with an average waiting time of ${summaries[bestAlgo].avgWT} units, average turnaround of ${summaries[bestAlgo].avgTAT} units, and ${summaries[bestAlgo].cpuUtil}% CPU utilization. It balances responsiveness with efficiency for this workload.`
-    });
-
-    // Worst performer
-    insights.push({
-      type: 'worst',
-      icon: '⚠️',
-      title: `Least Effective: ${ALGO_NAMES[worstAlgo]}`,
-      text: `${ALGO_NAMES[worstAlgo]} ranked last overall with an average waiting time of ${summaries[worstAlgo].avgWT} units. For this particular workload, it introduces more delay than other approaches.`
-    });
-
-    // Response time champion
-    const rtBest = algos.reduce((a, b) => parseFloat(summaries[a].avgRT) <= parseFloat(summaries[b].avgRT) ? a : b);
-    insights.push({
-      type: 'info',
-      icon: '⚡',
-      title: `Fastest Response: ${ALGO_NAMES[rtBest]}`,
-      text: `${ALGO_NAMES[rtBest]} provides the fastest average response time of ${summaries[rtBest].avgRT} units, meaning processes start executing sooner. This is critical for interactive or time-sensitive systems.`
-    });
-
-    // Context switch analysis
-    const csMax = algos.reduce((a, b) => parseInt(summaries[a].contextSwitches) >= parseInt(summaries[b].contextSwitches) ? a : b);
-    const csMin = algos.reduce((a, b) => parseInt(summaries[a].contextSwitches) <= parseInt(summaries[b].contextSwitches) ? a : b);
-    if (parseInt(summaries[csMax].contextSwitches) !== parseInt(summaries[csMin].contextSwitches)) {
-      insights.push({
-        type: 'warning',
-        icon: '🔀',
-        title: `Context Switch Overhead`,
-        text: `${ALGO_NAMES[csMax]} has the highest context switches (${summaries[csMax].contextSwitches}), which increases overhead. ${ALGO_NAMES[csMin]} has the fewest (${summaries[csMin].contextSwitches}). Excessive preemption can degrade performance in real systems.`
-      });
+    // 1. Convoy Effect Detected (FCFS)
+    const fcfsRes = fullResults['fcfs'];
+    if (fcfsRes.length >= 3) {
+      // Find earlier process with large burst delaying shorter processes
+      const firstfew = fcfsRes.slice(0, 2);
+      const longProc = firstfew.reduce((max, p) => p.burst > max.burst ? p : max, firstfew[0]);
+      const avgBurst = fcfsRes.reduce((s, p) => s + p.burst, 0) / fcfsRes.length;
+      
+      if (longProc.burst > avgBurst * 1.5) {
+        const delayed = fcfsRes.filter(p => p.arrival > longProc.arrival && p.startTime >= longProc.startTime && p.burst < avgBurst);
+        if (delayed.length > 0) {
+          const avgDelayedWT = delayed.reduce((s, p) => s + p.waitingTime, 0) / delayed.length;
+          insights.push({
+            type: 'warning', icon: '🚛', title: 'Convoy Effect Detected — FCFS',
+            text: `FCFS recorded an avg wait of ${summaries['fcfs'].avgWT} units. Process ${longProc.pid} (burst: ${longProc.burst}) blocked shorter jobs behind it, inflating their wait times to roughly ${avgDelayedWT.toFixed(1)} units each. This is the Convoy Effect — a core weakness of non-preemptive scheduling in mixed workloads.`
+          });
+        }
+      }
     }
 
-    // Starvation warning
-    const hasPriority = ['priority-np', 'priority-p'].some(a => algos.includes(a));
-    if (hasPriority) {
-      const priNP = summaries['priority-np'];
-      const maxWT_pri = Math.max(...allResults['priority-np'].results.map(r => r.waitingTime));
-      if (maxWT_pri > parseFloat(priNP.avgWT) * 2) {
+    // 2. Starvation Risk (Priority Preemptive)
+    if (!allPrioritiesZero) {
+      const prioP = fullResults['priority-p'];
+      // Priority is 1 (highest) to N (lowest). Find process with max priority number
+      const maxPriVal = Math.max(...prioP.map(p => p.priority));
+      const starvedProc = prioP.find(p => p.priority === maxPriVal);
+      const minPriVal = Math.min(...prioP.map(p => p.priority));
+      const fastProc = prioP.find(p => p.priority === minPriVal);
+
+      if (starvedProc && fastProc && starvedProc.waitingTime > fastProc.waitingTime * 3) {
+        const diff = starvedProc.waitingTime - fastProc.waitingTime;
         insights.push({
-          type: 'warning',
-          icon: '🚨',
-          title: 'Starvation Risk Detected',
-          text: `In Priority scheduling, some processes waited ${maxWT_pri} units — more than 2× the average (${priNP.avgWT}). Lower-priority processes may experience starvation without aging mechanisms.`
+          type: 'worst', icon: '☠️', title: 'Starvation Risk — Priority (Preemptive)',
+          text: `Process ${starvedProc.pid} (priority: ${maxPriVal}, lowest) waited ${starvedProc.waitingTime} units before/during execution — ${diff} units longer than the highest-priority process (${fastProc.pid}). In a busier system, ${starvedProc.pid} would never finish. Aging mechanisms are needed to prevent indefinite starvation.`
         });
       }
     }
 
-    // Fairness analysis
+    // 3. Preemption Payoff (SRTF vs SJF)
+    const srtfAvgWT = parseFloat(summaries['srtf'].avgWT);
+    const sjfAvgWT = parseFloat(summaries['sjf'].avgWT);
+    if (srtfAvgWT < sjfAvgWT) {
+      const diff = (sjfAvgWT - srtfAvgWT).toFixed(2);
+      insights.push({
+        type: 'best', icon: '🚀', title: 'Preemption Payoff — SRTF vs SJF',
+        text: `SRTF's avg wait was ${srtfAvgWT} units vs SJF's ${sjfAvgWT} units — a ${diff} unit improvement. This gain came from preempting longer running jobs when a new process arrived with a shorter remaining burst. Preemption directly rescued response time for late-arriving short processes.`
+      });
+    }
+
+    // 4. Fairness vs Efficiency Tradeoff (Round Robin)
     const wtStdDevs = {};
     algos.forEach(a => {
-      const wts = allResults[a].results.map(r => r.waitingTime);
+      const wts = fullResults[a].map(r => r.waitingTime);
       const mean = wts.reduce((s, v) => s + v, 0) / wts.length;
       const variance = wts.reduce((s, v) => s + (v - mean) ** 2, 0) / wts.length;
       wtStdDevs[a] = Math.sqrt(variance);
     });
-    const fairestAlgo = algos.reduce((a, b) => wtStdDevs[a] <= wtStdDevs[b] ? a : b);
+    
+    // Check if RR is among the fairest
+    const fairestAlgo = algos.reduce((a, b) => wtStdDevs[a] < wtStdDevs[b] ? a : b);
+    if (fairestAlgo === 'rr' && parseInt(summaries['rr'].contextSwitches) > parseInt(summaries['sjf'].contextSwitches)) {
+      const extraSwitches = parseInt(summaries['rr'].contextSwitches) - parseInt(summaries['sjf'].contextSwitches);
+      insights.push({
+        type: 'info', icon: '⚖️', title: 'Fairness vs Efficiency Tradeoff — Round Robin',
+        text: `RR achieved the lowest wait-time standard deviation (σ = ${wtStdDevs['rr'].toFixed(2)}) — meaning no process was disproportionately delayed. But this fairness cost ${extraSwitches} extra context switches over SJF, adding scheduling overhead. Ideal for time-sharing systems, poor for CPU-bound batch workloads.`
+      });
+    }
+
+    // 5. Priority Inversion Zone (Priority NP vs Priority P)
+    if (!allPrioritiesZero) {
+      const prioNP = fullResults['priority-np'];
+      const prioP = fullResults['priority-p'];
+      
+      // Look for a high priority process (low num) that waited significantly longer in NP than P
+      for (let i = 0; i < prioNP.length; i++) {
+        let pNP = prioNP[i];
+        let pP = prioP.find(p => p.pid === pNP.pid);
+        // If it's a high priority process and it waited at least 2 units longer in NP
+        if (pNP.priority < 3 && (pNP.waitingTime - pP.waitingTime > 2) && pNP.arrival > 0) {
+          insights.push({
+            type: 'warning', icon: '⏳', title: 'Priority Inversion Zone — Priority NP vs Priority P',
+            text: `Priority NP forced ${pNP.pid} (high priority, late arrival) to wait behind a lower-priority running process for ${pNP.waitingTime} units — a classic priority inversion. Priority P eliminated this by preempting at arrival, reducing ${pNP.pid}'s wait to ${pP.waitingTime} units. This is exactly the problem NASA's Mars Pathfinder faced in 1997.`
+          });
+          break; // Show only once
+        }
+      }
+    }
+
+    // 6. Best Fit Verdict — Algorithm Recommendation Engine
+    // Determine workload characteristics
+    const bursts = fullResults['fcfs'].map(p => p.burst);
+    const avgBurst = bursts.reduce((a, b) => a + b, 0) / bursts.length;
+    const burstVariance = bursts.reduce((s, v) => s + (v - avgBurst) ** 2, 0) / bursts.length;
+    const isMixedWorkload = burstVariance > avgBurst * 0.5; // High variance in bursts
+    
+    let winnerWait = algos.reduce((a, b) => parseFloat(summaries[a].avgWT) <= parseFloat(summaries[b].avgWT) ? a : b);
+    let recommendation = '';
+    
+    if (isMixedWorkload && !allPrioritiesZero) {
+        recommendation = `For this complex workload profile (mixed burst lengths, staggered arrivals, distinct priorities): **${ALGO_NAMES[winnerWait]}** minimizes avg wait, **Round Robin** maximizes fairness across distinct jobs, and **Priority P** strict-enforces rules. If this were a web server handling user requests → Round Robin. If this were a batch processing system → ${ALGO_NAMES[winnerWait]}.`;
+    } else if (isMixedWorkload) {
+        recommendation = `For this workload profile (mixed burst lengths, staggered arrivals): **${ALGO_NAMES[winnerWait]}** minimizes avg wait dramatically, **Round Robin** maximizes fairness, **FCFS** is simplest but suffers from convoys. If this were a web server → Round Robin. If this were a batch processing system → ${ALGO_NAMES[winnerWait]}.`;
+    } else {
+        recommendation = `For this uniform workload profile (similar burst lengths): the differences between algorithms diminish. **${ALGO_NAMES[winnerWait]}** mathematically wins, but FCFS is highly efficient due to low overhead (only ${summaries['fcfs'].contextSwitches} switches). Choose based on system constraints rather than theoretical wait times.`;
+    }
+
     insights.push({
-      type: 'info',
-      icon: '⚖️',
-      title: `Most Fair: ${ALGO_NAMES[fairestAlgo]}`,
-      text: `${ALGO_NAMES[fairestAlgo]} distributes waiting time most evenly across processes (stddev = ${wtStdDevs[fairestAlgo].toFixed(2)}). Fairness matters when all processes should receive equitable CPU access.`
+      type: 'best', icon: '🧠', title: 'Best Fit Verdict — Algorithm Recommendation Engine',
+      text: recommendation
     });
 
-    // Render
+    // Fallback if no specific anomalies were detected to ensure there's always UI
+    if (insights.length < 3) {
+      if (allPrioritiesZero) {
+        insights.unshift({
+          type: 'notice', icon: 'ℹ️', title: 'Input Defaults Applied',
+          text: `Your input has no explicit priorities — all default to 0, making Priority algorithms identical to FCFS. Try adding distinct priorities to trigger deeper Priority-based diagnostics.`
+        });
+      }
+      const genericBest = algos.reduce((a, b) => parseFloat(summaries[a].avgWT) <= parseFloat(summaries[b].avgWT) ? a : b);
+      const genericWorst = algos.reduce((a, b) => parseFloat(summaries[a].avgWT) >= parseFloat(summaries[b].avgWT) ? a : b);
+      if (!insights.some(i => i.title.includes('Best Fit Verdict'))) {
+         insights.push({
+            type: 'best', icon: '🏆', title: `Efficiency Leader: ${ALGO_NAMES[genericBest]}`,
+            text: `${ALGO_NAMES[genericBest]} achieved the lowest avg wait of ${summaries[genericBest].avgWT} units mathematically.`
+         });
+      }
+      insights.push({
+        type: 'worst', icon: '⚠️', title: `Maximum Delay: ${ALGO_NAMES[genericWorst]}`,
+        text: `${ALGO_NAMES[genericWorst]} struggled most with this specific sequence, yielding a wait time of ${summaries[genericWorst].avgWT} units.`
+      });
+    }
+
+    // Render Insights Array to DOM
     container.innerHTML = `
       <div class="insights-container">
         ${insights.map(i => `
@@ -1266,7 +1469,7 @@
             <div class="insight-icon">${i.icon}</div>
             <div class="insight-content">
               <h4>${i.title}</h4>
-              <p>${i.text}</p>
+              <p>${i.text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p>
             </div>
           </div>
         `).join('')}
